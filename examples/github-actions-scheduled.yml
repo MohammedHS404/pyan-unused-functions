@@ -1,0 +1,98 @@
+# Example: Scheduled weekly check for unused functions
+# Place this in .github/workflows/weekly-code-check.yml
+
+name: Weekly Code Quality Check
+
+on:
+  schedule:
+    # Run every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  weekly-analysis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install pyan-unused-functions
+      run: pip install pyan-unused-functions
+    
+    - name: Analyze codebase
+      id: analyze
+      run: |
+        OUTPUT=$(pyan-unused-functions . 2>&1)
+        echo "$OUTPUT"
+        
+        # Save output to file
+        echo "$OUTPUT" > analysis-results.txt
+        
+        # Extract metrics
+        TOTAL=$(echo "$OUTPUT" | grep "Total functions defined:" | grep -oE '[0-9]+' || echo "0")
+        UNUSED=$(echo "$OUTPUT" | grep "Potentially unused functions:" | grep -oE '[0-9]+' || echo "0")
+        
+        echo "total_functions=$TOTAL" >> $GITHUB_OUTPUT
+        echo "unused_functions=$UNUSED" >> $GITHUB_OUTPUT
+    
+    - name: Upload results
+      uses: actions/upload-artifact@v3
+      with:
+        name: unused-functions-report
+        path: analysis-results.txt
+        retention-days: 30
+    
+    - name: Create issue if unused functions found
+      if: steps.analyze.outputs.unused_functions > 0
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const total = '${{ steps.analyze.outputs.total_functions }}';
+          const unused = '${{ steps.analyze.outputs.unused_functions }}';
+          
+          // Check if an issue already exists
+          const issues = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            labels: ['code-quality', 'unused-functions'],
+            state: 'open'
+          });
+          
+          if (issues.data.length === 0) {
+            // Create new issue
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🧹 Code Cleanup: ${unused} unused functions detected`,
+              body: `## Weekly Code Quality Report\n\n` +
+                    `**Total functions:** ${total}\n` +
+                    `**Unused functions:** ${unused}\n\n` +
+                    `[View detailed report](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
+                    `Please review these functions and:\n` +
+                    `- Remove them if they're no longer needed\n` +
+                    `- Document why they should remain if they serve a purpose\n` +
+                    `- Consider if they're used dynamically (see analysis notes)`,
+              labels: ['code-quality', 'unused-functions', 'technical-debt']
+            });
+          } else {
+            // Update existing issue
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issues.data[0].number,
+              body: `## Update: ${new Date().toISOString().split('T')[0]}\n\n` +
+                    `Still detecting **${unused}** unused functions (out of ${total} total).\n\n` +
+                    `[View latest report](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            });
+          }
+    
+    - name: Send success notification
+      if: steps.analyze.outputs.unused_functions == 0
+      run: |
+        echo "✅ No unused functions detected! Codebase is clean."

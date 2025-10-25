@@ -1,0 +1,63 @@
+# Example: Strict mode - fail if any unused functions are found
+# Place this in .github/workflows/code-quality.yml
+
+name: Code Quality - No Unused Functions
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-unused-functions:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install pyan-unused-functions
+      run: pip install pyan-unused-functions
+    
+    - name: Analyze and enforce no unused functions
+      id: analyze
+      run: |
+        echo "Running analysis..."
+        OUTPUT=$(pyan-unused-functions . 2>&1)
+        echo "$OUTPUT"
+        
+        # Extract the count of unused functions
+        UNUSED_COUNT=$(echo "$OUTPUT" | grep "Potentially unused functions:" | grep -oE '[0-9]+' || echo "0")
+        
+        echo "unused_count=$UNUSED_COUNT" >> $GITHUB_OUTPUT
+        
+        if [ "$UNUSED_COUNT" -gt 0 ]; then
+          echo "❌ Found $UNUSED_COUNT unused functions!"
+          exit 1
+        else
+          echo "✅ No unused functions found!"
+        fi
+    
+    - name: Comment on PR with results
+      if: failure() && github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '⚠️ **Unused Functions Detected**\n\n' +
+                  'The analysis found potentially unused functions in your code. ' +
+                  'Please review the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.\n\n' +
+                  '**What to do:**\n' +
+                  '- Review if these functions are truly unused\n' +
+                  '- Remove unused code or add them to the exclusion list\n' +
+                  '- Functions may be used dynamically (review the notes in the output)'
+          })

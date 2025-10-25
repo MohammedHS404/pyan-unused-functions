@@ -1,0 +1,69 @@
+# Example: Analyze multiple directories/projects separately
+# Place this in .github/workflows/multi-project-check.yml
+
+name: Multi-Project Unused Functions Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  analyze-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # Continue checking all projects even if one fails
+      matrix:
+        project:
+          - name: "Backend API"
+            path: "./backend"
+          - name: "Frontend Utils"
+            path: "./frontend/utils"
+          - name: "CLI Tools"
+            path: "./cli"
+          - name: "Data Processing"
+            path: "./data-pipeline"
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install pyan-unused-functions
+      run: pip install pyan-unused-functions
+    
+    - name: Analyze ${{ matrix.project.name }}
+      run: |
+        echo "🔍 Analyzing: ${{ matrix.project.name }}"
+        echo "📁 Path: ${{ matrix.project.path }}"
+        echo "----------------------------------------"
+        
+        if [ -d "${{ matrix.project.path }}" ]; then
+          pyan-unused-functions ${{ matrix.project.path }}
+        else
+          echo "⚠️  Directory not found: ${{ matrix.project.path }}"
+          exit 1
+        fi
+    
+    - name: Summary
+      if: always()
+      run: echo "✅ Analysis complete for ${{ matrix.project.name }}"
+
+  summary:
+    needs: analyze-matrix
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Check overall status
+      run: |
+        if [ "${{ needs.analyze-matrix.result }}" == "success" ]; then
+          echo "✅ All projects analyzed successfully!"
+        else
+          echo "⚠️  Some projects had issues. Check the logs above."
+        fi
